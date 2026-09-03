@@ -3,6 +3,16 @@ name: Deploy to WordPress.org SVN
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to deploy (dry runs only)'
+        required: false
+        default: '0.0.0-test'
+      dry_run:
+        description: 'Deploy to a throwaway SVN repo built on the runner instead of WordPress.org'
+        type: boolean
+        default: true
 
 jobs:
   deploy:
@@ -14,14 +24,40 @@ jobs:
       - name: Install Subversion
         run: sudo apt-get update && sudo apt-get install -y subversion
 
-      - name: Determine version from tag
+      - name: Determine version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up throwaway SVN repo (dry run only)
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        id: dryrun
+        run: |
+          REPO_DIR="$RUNNER_TEMP/wp-svn/repo"
+          svnadmin create "$REPO_DIR"
+          svn mkdir -m "init layout" \
+            "file://$REPO_DIR/git-cd-testing" \
+            "file://$REPO_DIR/git-cd-testing/trunk" \
+            "file://$REPO_DIR/git-cd-testing/tags" \
+            "file://$REPO_DIR/git-cd-testing/assets"
+          echo "svn_url=file://$REPO_DIR/git-cd-testing" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to SVN
         env:
-          SVN_URL: https://plugins.svn.wordpress.org/git-cd-testing
+          SVN_URL: ${{ steps.dryrun.outputs.svn_url || 'https://plugins.svn.wordpress.org/git-cd-testing' }}
           SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
           SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
           VERSION: ${{ steps.version.outputs.version }}
         run: ./bin/deploy-svn.sh
+
+      - name: Show resulting SVN tree (dry run only)
+        if: steps.dryrun.outputs.svn_url
+        run: |
+          echo "-- trunk --"
+          svn ls "${{ steps.dryrun.outputs.svn_url }}/trunk"
+          echo "-- tags --"
+          svn ls "${{ steps.dryrun.outputs.svn_url }}/tags"
