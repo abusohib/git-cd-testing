@@ -38,6 +38,7 @@ jobs:
         id: dryrun
         run: |
           REPO_DIR="$RUNNER_TEMP/wp-svn/repo"
+          mkdir -p "$(dirname "$REPO_DIR")"
           svnadmin create "$REPO_DIR"
           svn mkdir -m "init layout" \
             "file://$REPO_DIR/git-cd-testing" \
